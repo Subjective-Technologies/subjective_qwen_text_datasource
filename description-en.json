@@ -1,0 +1,27 @@
+{
+  "description": "Text-only Qwen model profile for local inference. Optimized for synthesis/aggregation tasks over text input — used when the vision encoder of the VL variant is unnecessary overhead.",
+  "domainCategory": "AI & Automation",
+  "subjectiveTechnologyElement": "DataSources",
+  "publisher": "BrainBoost Ltd.",
+  "publisher_website": "https://subjectivetechnologies.com",
+  "publisher_email": "plugins@subjectivetechnologies.com",
+  "disclaimer": "This data source is not associated with, endorsed by, or approved by Qwen / Alibaba. It loads open-weights Qwen text-only models for local inference. BrainBoost Ltd. is not responsible for any damages, losses, or issues resulting from its use.",
+  "sections": [
+    {
+      "type": "splitList",
+      "title": "Qwen Text (local)",
+      "text": "Loads a text-only Qwen LLM (no vision encoder) for local inference. Half the VRAM of the equivalent VL model. Recommended when the input is text (e.g. JSON synthesis, summarization, episode aggregation).",
+      "image": {
+        "src": "/subjective_qwen_text_datasource/icon.svg",
+        "alt": "Qwen Text icon"
+      },
+      "list": [
+        "Connection type: Local LLM",
+        "Default model: Qwen/Qwen2.5-1.5B-Instruct",
+        "Vision support: none — use SubjectiveQwenLocalDataSource for image inputs",
+        "Quantization: optional 4-bit / 8-bit via bitsandbytes",
+        "Typical use: episode synthesis from accumulated atom JSONs"
+      ]
+    }
+  ]
+}
