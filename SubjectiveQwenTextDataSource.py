@@ -20,7 +20,9 @@ makes it a drop-in replacement on text-only nodes by changing only the
 `class` field in the pipeline JSON.
 """
 
+import json
 import os
+import re
 from typing import Any, Dict
 
 from subjective_abstract_data_source_package import SubjectiveDataSource
@@ -170,7 +172,7 @@ class SubjectiveQwenTextDataSource(SubjectiveDataSource):
         # `files` is accepted for interface symmetry with the VL data source
         # but ignored — this DS is text-only by definition.
         if isinstance(message, dict):
-            payload = message.get("content", message.get("text", message.get("message", "")))
+            payload = self._message_with_upstream_context(message)
             return self._handle_request(payload)
         return self._handle_request(message)
 
@@ -333,6 +335,7 @@ class SubjectiveQwenTextDataSource(SubjectiveDataSource):
             # Strip the prompt tokens from the generated output.
             generated_ids = output_ids[0][inputs["input_ids"].shape[1]:]
             response_text = self._tokenizer.decode(generated_ids, skip_special_tokens=True).strip()
+            response_text = self._coerce_json_response(text, response_text)
 
             return {
                 "success": True,
@@ -351,3 +354,79 @@ class SubjectiveQwenTextDataSource(SubjectiveDataSource):
                 "response": "",
                 "model": self.params.get("model_id", ""),
             }
+
+    @staticmethod
+    def _message_with_upstream_context(request: Dict) -> str:
+        base = request.get("content", request.get("text", request.get("message", "")))
+        text = "" if base is None else str(base)
+        context = []
+        for key, value in request.items():
+            if key in {"content", "text", "message"}:
+                continue
+            if value in (None, ""):
+                continue
+            if key == "files":
+                continue
+            try:
+                rendered = json.dumps(value, ensure_ascii=False, indent=2)
+            except TypeError:
+                rendered = str(value)
+            if rendered and rendered != "{}":
+                context.append(f"{key}:\n{rendered}")
+        if not context:
+            return text
+        return f"{text}\n\nINPUT:\n" + "\n\n".join(context)
+
+    @classmethod
+    def _coerce_json_response(cls, prompt: str, response: str) -> str:
+        if '"work_episode_id"' not in prompt:
+            return response
+        extracted = cls._extract_json_object(response)
+        return extracted or response
+
+    @staticmethod
+    def _extract_json_object(text: str) -> str:
+        raw = (text or "").strip()
+        if not raw:
+            return ""
+        fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", raw, flags=re.IGNORECASE | re.DOTALL)
+        if fenced:
+            raw = fenced.group(1).strip()
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return json.dumps(parsed, ensure_ascii=False)
+        except Exception:
+            pass
+
+        start = raw.find("{")
+        if start < 0:
+            return ""
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(raw)):
+            char = raw[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start:index + 1]
+                    try:
+                        parsed = json.loads(candidate)
+                        if isinstance(parsed, dict):
+                            return json.dumps(parsed, ensure_ascii=False)
+                    except Exception:
+                        return ""
+        return ""
