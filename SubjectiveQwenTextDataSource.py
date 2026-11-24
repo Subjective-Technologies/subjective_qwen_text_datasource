@@ -323,6 +323,7 @@ class SubjectiveQwenTextDataSource(SubjectiveDataSource):
 
             gen_kwargs = {
                 "max_new_tokens": self.params["max_new_tokens"],
+                "repetition_penalty": float(self.params.get("repetition_penalty", 1.15)),
                 "do_sample": bool(self.params.get("do_sample", False)),
             }
             if gen_kwargs["do_sample"]:
@@ -382,7 +383,77 @@ class SubjectiveQwenTextDataSource(SubjectiveDataSource):
         if '"work_episode_id"' not in prompt:
             return response
         extracted = cls._extract_json_object(response)
-        return extracted or response
+        if not extracted:
+            return response
+        try:
+            payload = json.loads(extracted)
+        except Exception:
+            return extracted
+        if not isinstance(payload, dict):
+            return extracted
+        cleaned, degenerate = cls._collapse_repeated_value(payload)
+        if not isinstance(cleaned, dict):
+            return extracted
+        if degenerate:
+            cleaned["rankable"] = False
+            status = str(cleaned.get("status") or "")
+            if status in {"", "complete", "provisional"}:
+                cleaned["status"] = "insufficient_sequence_context"
+        return json.dumps(cleaned, ensure_ascii=False)
+
+    @classmethod
+    def _collapse_repeated_value(cls, value: Any) -> tuple[Any, bool]:
+        if isinstance(value, str):
+            lines = value.splitlines()
+            counts: dict[str, int] = {}
+            for line in lines:
+                key = line.strip()
+                if key:
+                    counts[key] = counts.get(key, 0) + 1
+            if not any(count >= 4 for count in counts.values()):
+                return value, False
+            seen: set[str] = set()
+            kept: list[str] = []
+            for line in lines:
+                key = line.strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                kept.append(line)
+                if len(kept) >= 6:
+                    break
+            return "\n".join(kept), True
+        if isinstance(value, list):
+            changed = False
+            kept = []
+            seen: set[str] = set()
+            for item in value:
+                cleaned, item_changed = cls._collapse_repeated_value(item)
+                changed = changed or item_changed
+                marker = cleaned if isinstance(cleaned, str) else json.dumps(cleaned, sort_keys=True, ensure_ascii=False)
+                if marker in seen:
+                    changed = True
+                    continue
+                seen.add(marker)
+                kept.append(cleaned)
+                if len(kept) >= 8:
+                    changed = True
+                    break
+            if len(kept) != len(value):
+                changed = True
+            return kept, changed
+        if isinstance(value, dict):
+            changed = False
+            kept = {}
+            for key, item in value.items():
+                if key in {"output", "traceback"}:
+                    changed = True
+                    continue
+                cleaned, item_changed = cls._collapse_repeated_value(item)
+                changed = changed or item_changed
+                kept[key] = cleaned
+            return kept, changed
+        return value, False
 
     @staticmethod
     def _extract_json_object(text: str) -> str:
